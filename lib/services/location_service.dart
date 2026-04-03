@@ -7,37 +7,34 @@ class LocationService {
     bool serviceEnabled;
     LocationPermission permission;
 
-    // Check if location services are enabled.
     serviceEnabled = await _geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      // Location services are not enabled don't continue
-      // accessing the position and request users of the 
-      // App to enable the location services.
-      return null;
-    }
+    if (!serviceEnabled) return null;
 
     permission = await _geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await _geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        // Permissions are denied, next time you could try
-        // requesting permissions again (this is also where
-        // Android's shouldShowRequestPermissionRationale 
-        // returned true. According to Android guidelines
-        // your App should show an explanatory UI now.
-        return null;
-      }
+      if (permission == LocationPermission.denied) return null;
     }
 
-    if (permission == LocationPermission.deniedForever) {
-      // Permissions are denied forever, handle appropriately. 
-      return null;
-    }
+    if (permission == LocationPermission.deniedForever) return null;
 
-    // When we reach here, permissions are granted and we can
-    // continue accessing the position of the device.
-    return await _geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-    );
+    try {
+      // 1. Try to get the last known position first (fastest)
+      Position? lastPosition = await _geolocator.getLastKnownPosition();
+      
+      // 2. Try to get the current position with a timeout
+      // This ensures if GPS is slow, we don't hang the app forever
+      Position currentPosition = await _geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 5), // Wait max 5 seconds for high accuracy
+        ),
+      );
+      
+      return currentPosition;
+    } catch (e) {
+      // If high accuracy fails or times out, return the last known position
+      return await _geolocator.getLastKnownPosition();
+    }
   }
 }

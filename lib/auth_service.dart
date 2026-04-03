@@ -31,7 +31,7 @@ class AuthService {
   }
   
   // Register with email and password
-  Future registerWithEmailAndPassword(String email, String password) async {
+  Future registerWithEmailAndPassword(String email, String password, {String name = 'New User'}) async {
     try {
       UserCredential result = await _auth.createUserWithEmailAndPassword(
           email: email.trim(), password: password);
@@ -39,7 +39,7 @@ class AuthService {
       
       // Create a new document for the user with the uid
       await DatabaseService(uid: user.uid).updateUserData(
-        'New User', 
+        name, 
         email.trim(), 
         '', // Custom message will be empty initially
         '', // Country will be set later

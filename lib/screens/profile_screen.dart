@@ -20,6 +20,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final DatabaseService _database = DatabaseService(uid: FirebaseAuth.instance.currentUser!.uid);
   
   bool loading = false;
+  final _formKey = GlobalKey<FormState>();
+  late TextEditingController _nameController;
+  late TextEditingController _emailController;
   
   // State variables
   String _name = '';
@@ -34,6 +37,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Country? _selectedCountry;
   File? _imageFile;
   final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+    _emailController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    super.dispose();
+  }
 
   Future _pickImage() async {
     final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
@@ -59,33 +76,73 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _saveProfile() async {
-    setState(() => loading = true);
-    
-    String? imageUrl = _profileImageUrl;
-    if (_imageFile != null) {
-      imageUrl = await _uploadImage(_imageFile!);
-    }
-    
-    await _database.updateUserData(
-      _name,
-      _email,
-      _customMessage,
-      _countryCode,
-      profileImageUrl: imageUrl,
-      aiProcessing: _aiProcessing,
-      soundSensitivity: _soundSensitivity,
-      sosDelay: _sosDelay,
-    );
-    
-    if (mounted) {
-      setState(() {
-        loading = false;
-        _imageFile = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Settings updated successfully")),
+    if (_formKey.currentState?.validate() ?? false) {
+      setState(() => loading = true);
+      
+      String? imageUrl = _profileImageUrl;
+      if (_imageFile != null) {
+        imageUrl = await _uploadImage(_imageFile!);
+      }
+      
+      await _database.updateUserData(
+        _nameController.text.trim(),
+        _emailController.text.trim(),
+        _customMessage,
+        _countryCode,
+        profileImageUrl: imageUrl,
+        aiProcessing: _aiProcessing,
+        soundSensitivity: _soundSensitivity,
+        sosDelay: _sosDelay,
       );
+      
+      if (mounted) {
+        setState(() {
+          loading = false;
+          _imageFile = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Settings updated successfully")),
+        );
+      }
     }
+  }
+
+  void _showEditNameDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Profile'),
+        content: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Full Name', border: OutlineInputBorder()),
+                validator: (val) => val == null || val.isEmpty ? 'Please enter your name' : null,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _emailController,
+                decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder()),
+                validator: (val) => val == null || val.isEmpty ? 'Please enter your email' : null,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              _saveProfile();
+              Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -97,6 +154,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final userData = snapshot.data!.data() as Map<String, dynamic>;
           _name = userData['name'] ?? '';
           _email = userData['email'] ?? '';
+          
+          // Only update controllers if the user isn't currently typing
+          if (!loading) {
+            _nameController.text = _name;
+            _emailController.text = _email;
+          }
+          
           _customMessage = userData['customMessage'] ?? '';
           _countryCode = userData['country'] ?? '';
           _profileImageUrl = userData['profileImageUrl'];
@@ -122,16 +186,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               'Profile & Settings',
               style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
             ),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.notifications_none, color: Colors.black),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Notification history coming soon")),
-                  );
-                },
-              ),
-            ],
           ),
           body: SingleChildScrollView(
             child: Column(
@@ -155,7 +209,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 border: Border.all(color: Colors.white, width: 4),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.1),
+                                    color: Colors.black.withOpacity(0.1),
                                     blurRadius: 10,
                                     offset: const Offset(0, 4),
                                   )
@@ -163,7 +217,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               child: CircleAvatar(
                                 radius: 56,
-                                backgroundColor: const Color(0xFF02579C).withValues(alpha: 0.1),
+                                backgroundColor: const Color(0xFF02579C).withOpacity(0.1),
                                 backgroundImage: _imageFile != null 
                                   ? FileImage(_imageFile!) 
                                   : (_profileImageUrl != null ? NetworkImage(_profileImageUrl!) : null) as ImageProvider?,
@@ -188,9 +242,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      Text(
-                        _name,
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _name.isEmpty ? 'New User' : _name,
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.edit, size: 18, color: Color(0xFF02579C)),
+                            onPressed: _showEditNameDialog,
+                          ),
+                        ],
                       ),
                       Text(
                         _email,
@@ -286,7 +349,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 56),
                       foregroundColor: Colors.red,
-                      side: BorderSide(color: Colors.red.withValues(alpha: 0.2)),
+                      side: BorderSide(color: Colors.red.withOpacity(0.2)),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
                     icon: const Icon(Icons.logout),
