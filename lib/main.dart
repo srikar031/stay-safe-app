@@ -1,7 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:stay_safe_app/auth_service.dart';
 import 'package:stay_safe_app/auth_wrapper.dart';
@@ -9,6 +8,7 @@ import 'package:stay_safe_app/screens/contacts_screen.dart';
 import 'package:stay_safe_app/screens/emergency_screen.dart';
 import 'package:stay_safe_app/screens/home_screen.dart';
 import 'package:stay_safe_app/screens/profile_screen.dart';
+import 'package:stay_safe_app/screens/map_screen.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -16,11 +16,6 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  
-  // Request permissions
-  // await Permission.microphone.request();
-  // await Permission.location.request();
-  // await Permission.notification.request();
   
   runApp(const StaySafeApp());
 }
@@ -46,6 +41,7 @@ class StaySafeApp extends StatelessWidget {
           '/profile': (context) => const ProfileScreen(),
           '/contacts': (context) => const EmergencyContactsScreen(),
           '/emergency': (context) => const EmergencyScreen(),
+          '/map': (context) => const SafeHavensMapScreen(),
         },
       ),
     );

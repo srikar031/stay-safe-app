@@ -4,42 +4,59 @@ class DatabaseService {
   final String uid;
   DatabaseService({required this.uid});
 
-  // Collection reference
   final CollectionReference userCollection = FirebaseFirestore.instance.collection('users');
   final CollectionReference emergencyCollection = FirebaseFirestore.instance.collection('emergencies');
 
-  // Update user data
-  Future updateUserData(String name, String email, String customMessage, String country) async {
-    return await userCollection.doc(uid).set({
+  Future updateUserData(String name, String email, String customMessage, String country, {
+    String? profileImageUrl,
+    bool? aiProcessing,
+    double? soundSensitivity,
+    int? sosDelay,
+  }) async {
+    final Map<String, dynamic> data = {
       'name': name,
       'email': email,
       'customMessage': customMessage,
       'country': country,
-      'emergencyContacts': [],
-    });
+    };
+    if (profileImageUrl != null) data['profileImageUrl'] = profileImageUrl;
+    if (aiProcessing != null) data['aiProcessing'] = aiProcessing;
+    if (soundSensitivity != null) data['soundSensitivity'] = soundSensitivity;
+    if (sosDelay != null) data['sosDelay'] = sosDelay;
+
+    return await userCollection.doc(uid).set(data, SetOptions(merge: true));
   }
 
-  // Get user data stream
   Stream<DocumentSnapshot> get userData {
     return userCollection.doc(uid).snapshots();
   }
 
-  // Update emergency contacts
-  Future updateEmergencyContacts(List<Map<String, String>> contacts) async {
-    return await userCollection.doc(uid).update({'emergencyContacts': contacts});
+  Future updateEmergencyContacts(List<Map<String, dynamic>> contacts) async {
+    try {
+      // Create a fresh list of standard Maps to ensure no subtype issues
+      final List<Map<String, dynamic>> dataToSave = [];
+      for (var c in contacts) {
+        dataToSave.add({
+          'name': c['name'].toString(),
+          'phone': c['phone'].toString(),
+          'relationship': c['relationship'].toString(),
+          'isActive': c['isActive'] == true,
+        });
+      }
+
+      print('Saving contacts for UID: $uid');
+      return await userCollection.doc(uid).update({
+        'emergencyContacts': dataToSave,
+      });
+    } catch (e) {
+      print('Database Error: $e');
+      // If update fails (e.g. field doesn't exist), try set with merge
+      return await userCollection.doc(uid).set({
+        'emergencyContacts': contacts,
+      }, SetOptions(merge: true));
+    }
   }
 
-  // Update custom message
-  Future updateCustomMessage(String message) async {
-    return await userCollection.doc(uid).update({'customMessage': message});
-  }
-
-  // Update country
-  Future updateCountry(String country) async {
-    return await userCollection.doc(uid).update({'country': country});
-  }
-
-  // Create emergency record
   Future createEmergencyRecord(Map<String, dynamic> emergencyData) async {
     return await emergencyCollection.add({
       'userId': uid,
@@ -51,8 +68,10 @@ class DatabaseService {
     });
   }
 
-  // Update emergency status
   Future updateEmergencyStatus(String emergencyId, String status) async {
-    return await emergencyCollection.doc(emergencyId).update({'status': status});
+    return await emergencyCollection.doc(emergencyId).update({
+      'status': status,
+      'resolvedAt': Timestamp.now(),
+    });
   }
 }

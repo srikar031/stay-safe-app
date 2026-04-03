@@ -18,12 +18,15 @@ class AuthService {
   Future signInWithEmailAndPassword(String email, String password) async {
     try {
       UserCredential result = await _auth.signInWithEmailAndPassword(
-          email: email, password: password);
+          email: email.trim(), password: password);
       User? user = result.user;
       return _userFromFirebaseUser(user);
+    } on FirebaseAuthException catch (e) {
+      print(e.message);
+      return e.message; // Return the error message
     } catch (e) {
       print(e.toString());
-      return null;
+      return "An unexpected error occurred";
     }
   }
   
@@ -31,21 +34,24 @@ class AuthService {
   Future registerWithEmailAndPassword(String email, String password) async {
     try {
       UserCredential result = await _auth.createUserWithEmailAndPassword(
-          email: email, password: password);
+          email: email.trim(), password: password);
       User user = result.user!;
       
       // Create a new document for the user with the uid
       await DatabaseService(uid: user.uid).updateUserData(
         'New User', 
-        email, 
+        email.trim(), 
         '', // Custom message will be empty initially
         '', // Country will be set later
       );
       
       return _userFromFirebaseUser(user);
+    } on FirebaseAuthException catch (e) {
+      print(e.message);
+      return e.message; // Return the error message
     } catch (e) {
       print(e.toString());
-      return null;
+      return "An unexpected error occurred";
     }
   }
   

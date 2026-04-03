@@ -1,8 +1,7 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
-  final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
 
   Future<void> init() async {
     const AndroidInitializationSettings initializationSettingsAndroid =
@@ -11,30 +10,52 @@ class NotificationService {
     const InitializationSettings initializationSettings =
         InitializationSettings(android: initializationSettingsAndroid);
 
-    await _flutterLocalNotificationsPlugin.initialize(
+    await _notificationsPlugin.initialize(
       initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        // Handle notification tap or action button tap
+        if (response.payload == 'cancel_sos') {
+          // Logic to cancel SOS will be handled by a broadcast receiver or stream
+        }
+      },
     );
   }
 
-  Future<void> showNotification(String title, String body) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+  Future<void> showCountdownNotification(int secondsLeft) async {
+    final AndroidNotificationDetails androidPlatformChannelSpecifics =
         AndroidNotificationDetails(
-      'stay_safe_channel',
-      'Stay Safe Notifications',
-      channelDescription: 'Emergency notifications from Stay Safe App',
+      'sos_countdown_channel',
+      'SOS Alerts',
+      channelDescription: 'Countdown for automatic SOS triggering',
       importance: Importance.max,
       priority: Priority.high,
-      showWhen: false,
+      fullScreenIntent: true,
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
+      actions: <AndroidNotificationAction>[
+        const AndroidNotificationAction(
+          'cancel_sos',
+          'CANCEL SOS',
+          showsUserInterface: true,
+          cancelNotification: true,
+        ),
+      ],
     );
 
-    const NotificationDetails platformChannelSpecifics =
+    final NotificationDetails platformChannelSpecifics =
         NotificationDetails(android: androidPlatformChannelSpecifics);
 
-    await _flutterLocalNotificationsPlugin.show(
-      0,
-      title,
-      body,
+    await _notificationsPlugin.show(
+      100,
+      'Scream Detected!',
+      'Sending SOS in $secondsLeft seconds...',
       platformChannelSpecifics,
+      payload: 'cancel_sos',
     );
+  }
+
+  Future<void> cancelNotification(int id) async {
+    await _notificationsPlugin.cancel(id);
   }
 }

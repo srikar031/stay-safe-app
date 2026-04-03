@@ -1,13 +1,12 @@
 import 'dart:async';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:stay_safe_app/services/database_service.dart';
 import 'package:stay_safe_app/services/location_service.dart';
-// import 'package:stay_safe_app/services/notification_service.dart';
 import 'package:stay_safe_app/services/emergency_numbers.dart';
+import 'package:telephony/telephony.dart';
 
 class EmergencyScreen extends StatefulWidget {
   const EmergencyScreen({super.key});
@@ -19,7 +18,7 @@ class EmergencyScreen extends StatefulWidget {
 class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderStateMixin {
   final DatabaseService _database = DatabaseService(uid: FirebaseAuth.instance.currentUser!.uid);
   final LocationService _locationService = LocationService();
-  // final NotificationService _notificationService = NotificationService();
+  final Telephony telephony = Telephony.instance;
   
   bool _isEmergencyActive = false;
   bool _isCountdownActive = false;
@@ -32,7 +31,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
   String _userName = '';
   String _userCountry = '';
   String _customMessage = '';
-  List<Map<String, String>> _emergencyContacts = [];
+  List<Map<String, dynamic>> _emergencyContacts = [];
   Position? _currentPosition;
 
   @override
@@ -74,6 +73,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
           return {
             'name': contactMap['name'] as String? ?? '',
             'phone': contactMap['phone'] as String? ?? '',
+            'isActive': contactMap['isActive'] as bool? ?? true,
           };
         }).toList();
       });
@@ -90,9 +90,11 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
     _animationController.forward();
     
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        _countdown--;
-      });
+      if (mounted) {
+        setState(() {
+          _countdown--;
+        });
+      }
       
       if (_countdown <= 0) {
         timer.cancel();
@@ -119,10 +121,8 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
       _isEmergencyActive = true;
     });
     
-    // Get current location
     _currentPosition = await _locationService.getCurrentLocation();
     
-    // Create emergency record in Firestore
     final emergencyData = {
       'location': _currentPosition != null
           ? {'latitude': _currentPosition!.latitude, 'longitude': _currentPosition!.longitude}
@@ -133,10 +133,8 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
     
     final emergencyDoc = await _database.createEmergencyRecord(emergencyData);
     
-    // Send notifications to emergency contacts
     await _sendEmergencyNotifications(emergencyDoc.id);
     
-    // Start location tracking
     _startLocationTracking(emergencyDoc.id);
   }
 
@@ -145,7 +143,6 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
       _currentPosition = await _locationService.getCurrentLocation();
       
       if (_currentPosition != null) {
-        // Update location in Firestore
         await _database.emergencyCollection.doc(emergencyId).update({
           'location': {
             'latitude': _currentPosition!.latitude,
@@ -158,38 +155,44 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
   }
 
   Future<void> _sendEmergencyNotifications(String emergencyId) async {
-  // Get emergency number for the user's country
-  final emergencyNumber = EmergencyNumbers.getEmergencyNumber(_userCountry);
-  
-  // Send notifications to all emergency contacts
-  for (final contact in _emergencyContacts) {
-    final message = _customMessage.isNotEmpty 
-        ? _customMessage 
-        : 'Emergency alert from $_userName!';
+    final emergencyNumber = EmergencyNumbers.getEmergencyNumber(_userCountry);
+    bool permissionsGranted = await telephony.requestPhoneAndSmsPermissions ?? false;
+
+    if (!permissionsGranted) {
+      debugPrint("SMS Permissions denied");
+      return;
+    }
+
+    for (final contact in _emergencyContacts) {
+      if (contact['isActive'] == false) continue;
+
+      final message = _customMessage.isNotEmpty 
+          ? _customMessage 
+          : 'EMERGENCY! I need help. This is $_userName.';
+      
+      final locationLink = _currentPosition != null
+          ? ' My live location: https://www.google.com/maps/search/?api=1&query=${_currentPosition!.latitude},${_currentPosition!.longitude}'
+          : '';
+      
+      final fullSms = '$message$locationLink';
+
+      try {
+        await telephony.sendSms(
+          to: contact['phone'],
+          message: fullSms,
+        );
+      } catch (e) {
+        debugPrint("Failed to send SMS to ${contact['name']}: $e");
+      }
+    }
     
-    final locationText = _currentPosition != null
-        ? '\nLocation: https://maps.google.com/?q=${_currentPosition!.latitude},${_currentPosition!.longitude}'
-        : '';
-    
-    final fullMessage = '$message\n\nEmergency services in your area: $emergencyNumber$locationText';
-    
-    // In a real app, you would use a service like Twilio to send SMS
-    // For this example, we'll just show a local notification
-    // await _notificationService.showNotification(
-    //   'Emergency Alert',
-    //   'Emergency alert sent to ${contact['name']} at ${contact['phone']}',
-    // );
+    await _database.emergencyCollection.doc(emergencyId).update({
+      'contactsNotified': true,
+      'emergencyNumber': emergencyNumber,
+    });
   }
-  
-  // Mark contacts as notified
-  await _database.emergencyCollection.doc(emergencyId).update({
-    'contactsNotified': true,
-    'emergencyNumber': emergencyNumber,
-  });
-}
 
   void _endEmergency() async {
-    // Show confirmation dialog
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -203,20 +206,15 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text(
-              'I\'m Safe',
-              style: TextStyle(color: Colors.white),
-            ),
+            child: const Text('I\'m Safe', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
     
     if (confirmed == true) {
-      // Stop location tracking
       _locationTimer?.cancel();
       
-      // Update emergency status in Firestore
       final querySnapshot = await _database.emergencyCollection
           .where('userId', isEqualTo: FirebaseAuth.instance.currentUser!.uid)
           .where('status', isEqualTo: 'active')
@@ -228,13 +226,17 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
         await _database.updateEmergencyStatus(querySnapshot.docs.first.id, 'resolved');
       }
       
-      // Send "I'm safe" notifications to contacts
+      // Send "I'm safe" update
       for (final contact in _emergencyContacts) {
-        // In a real app, you would use a service like Twilio to send SMS
-        // await _notificationService.showNotification(
-        //   'Safety Confirmed',
-        //   'Notification sent to ${contact['name'] ?? ''} that you are safe',
-        // );
+        if (contact['isActive'] == false) continue;
+        try {
+          await telephony.sendSms(
+            to: contact['phone'],
+            message: "I am safe now. Thank you. - $_userName",
+          );
+        } catch (e) {
+          debugPrint("Failed to send safety update: $e");
+        }
       }
       
       setState(() {
@@ -250,7 +252,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
     return Scaffold(
       backgroundColor: Colors.red[50],
       appBar: AppBar(
-        title: const Text('Emergency'),
+        title: const Text('Emergency Mode'),
         backgroundColor: Colors.red,
         automaticallyImplyLeading: false,
       ),
@@ -268,49 +270,28 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Icon(
-          Icons.warning,
-          size: 100,
-          color: Colors.red,
-        ),
+        const Icon(Icons.warning, size: 100, color: Colors.red),
         const SizedBox(height: 20),
-        const Text(
-          'EMERGENCY MODE',
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.bold,
-            color: Colors.red,
-          ),
-        ),
+        const Text('EMERGENCY MODE', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.red)),
         const SizedBox(height: 20),
-        const Text(
-          'Press the button below to activate emergency alert',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 18),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 40),
+          child: Text('Pressing the button below will notify your safety circle with your live location.', textAlign: TextAlign.center, style: TextStyle(fontSize: 16)),
         ),
         const SizedBox(height: 40),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.red,
             padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
           ),
           onPressed: _startEmergencyCountdown,
-          child: const Text(
-            'ACTIVATE EMERGENCY ALERT',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          child: const Text('ACTIVATE SOS', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
         ),
         const SizedBox(height: 20),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text(
-            'Cancel',
-            style: TextStyle(color: Colors.red, fontSize: 16),
-          ),
+          child: const Text('Cancel', style: TextStyle(color: Colors.red, fontSize: 16)),
         ),
       ],
     );
@@ -324,55 +305,33 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
           alignment: Alignment.center,
           children: [
             SizedBox(
-              width: 200,
-              height: 200,
+              width: 200, height: 200,
               child: AnimatedBuilder(
                 animation: _animation,
                 builder: (context, child) {
                   return CircularProgressIndicator(
                     value: _animation.value,
-                    strokeWidth: 10,
-                    backgroundColor: Colors.grey[300],
+                    strokeWidth: 12,
+                    backgroundColor: Colors.grey[200],
                     valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
                   );
                 },
               ),
             ),
-            Text(
-              '$_countdown',
-              style: const TextStyle(
-                fontSize: 72,
-                fontWeight: FontWeight.bold,
-                color: Colors.red,
-              ),
-            ),
+            Text('$_countdown', style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold, color: Colors.red)),
           ],
         ),
         const SizedBox(height: 40),
-        const Text(
-          'Emergency alert will be sent in',
-          style: TextStyle(fontSize: 20),
-        ),
-        const SizedBox(height: 10),
-        const Text(
-          'Press CANCEL to abort',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
+        const Text('Sending SOS in...', style: TextStyle(fontSize: 24)),
         const SizedBox(height: 40),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey,
-            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
+            backgroundColor: Colors.black87,
+            padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 15),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
           ),
           onPressed: _cancelEmergencyCountdown,
-          child: const Text(
-            'CANCEL',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          child: const Text('CANCEL', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         ),
       ],
     );
@@ -382,48 +341,27 @@ class _EmergencyScreenState extends State<EmergencyScreen> with TickerProviderSt
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Icon(
-          Icons.notifications_active,
-          size: 100,
-          color: Colors.red,
-        ),
+        const Icon(Icons.notifications_active, size: 120, color: Colors.red),
         const SizedBox(height: 20),
-        const Text(
-          'EMERGENCY ALERT ACTIVE',
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: Colors.red,
-          ),
-        ),
+        const Text('SOS ACTIVE', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.red)),
         const SizedBox(height: 20),
-        Text(
-          'Your emergency contacts have been notified',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 18),
-        ),
+        const Text('Your safety circle has been notified.', style: TextStyle(fontSize: 18)),
         const SizedBox(height: 10),
         if (_currentPosition != null)
-          Text(
-            'Location: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}',
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+            child: Text('Tracking Location: ${_currentPosition!.latitude.toStringAsFixed(4)}, ${_currentPosition!.longitude.toStringAsFixed(4)}', style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
-        const SizedBox(height: 40),
+        const SizedBox(height: 60),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.green,
-            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
+            padding: const EdgeInsets.symmetric(horizontal: 80, vertical: 20),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
           ),
           onPressed: _endEmergency,
-          child: const Text(
-            'I\'M SAFE',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          child: const Text('I\'M SAFE', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
         ),
       ],
     );
